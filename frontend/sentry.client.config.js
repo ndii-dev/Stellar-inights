@@ -58,6 +58,73 @@ Sentry.init({
         return null;
       }
     }
+
+    // Redact sensitive data from event context
+    if (event.extra) {
+      event.extra = redactSentryData(event.extra);
+    }
+    
+    if (event.contexts) {
+      event.contexts = redactSentryData(event.contexts);
+    }
+
+    if (event.user) {
+      // Keep user ID but redact other potentially sensitive user data
+      event.user = {
+        id: event.user.id,
+        // Remove other fields like username, email that might be PII
+      };
+    }
+
+    // Redact sensitive data from breadcrumbs
+    if (event.breadcrumbs) {
+      event.breadcrumbs = event.breadcrumbs.map(breadcrumb => ({
+        ...breadcrumb,
+        data: breadcrumb.data ? redactSentryData(breadcrumb.data) : undefined,
+        message: breadcrumb.message ? redactSensitiveString(breadcrumb.message) : undefined,
+      }));
+    }
+
     return event;
   },
+});
+
+/**
+ * Redact sensitive data from Sentry event data
+ */
+function redactSentryData(data: Record<string, any>): Record<string, any> {
+  const result: Record<string, any> = {};
+  
+  for (const [key, value] of Object.entries(data)) {
+    // Check for sensitive field names
+    if (/password|secret|token|key|auth|credential|private|seed|mnemonic|jwt|bearer/i.test(key)) {
+      result[key] = '[REDACTED]';
+    } else if (typeof value === 'string') {
+      result[key] = redactSensitiveString(value);
+    } else if (typeof value === 'object' && value !== null) {
+      result[key] = redactSentryData(value);
+    } else {
+      result[key] = value;
+    }
+  }
+  
+  return result;
+}
+
+/**
+ * Redact sensitive patterns from strings
+ */
+function redactSensitiveString(str: string): string {
+  return str
+    // Redact Stellar addresses
+    .replace(/G[A-Z0-9]{55}/g, 'G****[REDACTED]')
+    // Redact Stellar secrets  
+    .replace(/S[A-Z0-9]{55}/g, 'S****[REDACTED_SECRET]')
+    // Redact JWT tokens
+    .replace(/eyJ[A-Za-z0-9_-]*\.[A-Za-z0-9_-]*\.[A-Za-z0-9_-]*/g, '[REDACTED_JWT]')
+    // Redact API keys
+    .replace(/\b[A-Za-z0-9_-]{32,}\b/g, '[REDACTED_KEY]')
+    // Redact emails
+    .replace(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g, '****@[REDACTED]');
+}
 });
